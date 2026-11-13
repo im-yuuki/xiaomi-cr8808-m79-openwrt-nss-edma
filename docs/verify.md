@@ -38,7 +38,7 @@
 
 ## Throughput (iperf3 single stream)
 
-- `192.168.12.x` LAN ↔ board, 5 second window: up ≈ 573 Mbit/s / down ≈ 468 Mbit/s solo; CPU near 100% on the board (expected for 2×A53 host-side traffic).
+- LAN client ↔ board, 5 second window: up ≈ 573 Mbit/s / down ≈ 468 Mbit/s solo; CPU near 100% on the board (expected for 2×A53 host-side traffic).
 - Forwarding path with Wi-Fi client → wired → WAN should benefit from NSS offload; not formally measured on this board (one direction only verified) before archiving.
 
 ## Extroot after flash

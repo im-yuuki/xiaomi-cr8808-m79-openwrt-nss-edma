@@ -90,7 +90,7 @@ Cross-check checksums (this archive ships only hashes, not binaries — see `art
 
 ### Phase 0 — host prep
 
-- Set your host's Ethernet to 192.168.31.100/24 (or your own TFTP server address; the U-Boot env has `serverip` preset but we `setenv` it).
+- Set your host's Ethernet to an address in the board's subnet (e.g. 192.168.0.100/24) — or use any other TFTP server on the same link.
 - Connect board's **WAN** port to host.
 - Serve artifacts via TFTP: any server works, e.g. in Docker:
 
