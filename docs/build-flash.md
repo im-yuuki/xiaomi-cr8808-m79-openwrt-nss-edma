@@ -7,7 +7,7 @@ Target: IPQ5018 + QCN6122 board, 256 MB RAM, **ESMT F50D1G41LB SPI NAND** on the
 ## 0. What you need
 
 - Linux build host with ~20 CPU threads, ≥ 16 GB RAM, ≥ 60 GB disk
-- The submodule `openwrt-nss-edma` (this repo's `.gitmodules` pins `cr8808-bringup-full` — a fork of [kuncy7/openwrt-nss-edma](https://github.com/kuncy7/openwrt-nss-edma) branch `c3po-tag-8021q`, branch `cr8808-bringup-full` on the fork with our device overlay `files/`)
+- The submodule `openwrt-nss-edma` (this repo's `.gitmodules` pins upstream [kuncy7/openwrt-nss-edma](https://github.com/kuncy7/openwrt-nss-edma) `c3po-tag-8021q`; apply `patches/` per `docs/nand-ecc.md`)
 - Working serial console for the board (115200/8N1; 120000 bps captures cleaner)
 - TFTP server on the host for the board's U-Boot (or from a Linux machine on the same LAN)
 - `git`, `curl`, build prerequisites (below)
@@ -15,10 +15,10 @@ Target: IPQ5018 + QCN6122 board, 256 MB RAM, **ESMT F50D1G41LB SPI NAND** on the
 ## 1. Clone sources
 
 ```bash
-git submodule update --init         # this repo -> cr8808-bringup-full branch
+git submodule update --init         # pinned upstream c3po-tag-8021q
 ```
 
-The submodule defaults to branch `cr8808-bringup-full` (ECC 4-bit + reproducible overlay files/). `cr8808-bringup-full` is based directly on `c3po-tag-8021q` upstream; you need **nothing else** — the ECC fix is the only board-specific kernel patch, everything else (DSA, qca8k fabric, qca-nss, ath11k NSS offload) comes from the base tree.
+The submodule defaults to upstream `c3po-tag-8021q`. Apply `patches/` first (see `docs/nand-ecc.md`) — the ECC fix is the only board-specific kernel patch; everything else (DSA, qca8k fabric, qca-nss, ath11k NSS offload) comes with the submodule.
 
 ## 2. Build dependencies (inside the build VM)
 

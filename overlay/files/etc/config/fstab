@@ -1,0 +1,6 @@
+config mount
+	option target '/overlay'
+	option device '/dev/ubi1_0'
+	option fstype 'ubifs'
+	option options 'sync'
+	option enabled '1'

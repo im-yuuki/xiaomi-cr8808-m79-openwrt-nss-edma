@@ -1,0 +1,39 @@
+From 597d84d20c57edbe6bc1078ee6473ac9e0357708 Mon Sep 17 00:00:00 2001
+From: Izuki Horiuchi <izuki.horiuchi@gmail.com>
+Date: Fri, 13 Nov 2026 23:39:17 +0700
+Subject: [PATCH] qualcommax: ipq50xx: use 4-bit NAND ECC on CR880x
+
+The Xiaomi CR8808 (ESMT SPI NAND, 2048+64) factory image writes NAND
+with 4-bit ECC; its dtb (config@mp02.1) carries nand-ecc-strength=<4>.
+With strength 8 the QPIC driver requires 2128 bytes (2048+80) which the
+chip cannot provide; the SPI NAND probe fails with -22 and no MTD device
+comes up. Use 4-bit/512 to match the factory image on this board.
+---
+ target/linux/qualcommax/dts/ipq5018-cr880x.dtsi | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/target/linux/qualcommax/dts/ipq5018-cr880x.dtsi b/target/linux/qualcommax/dts/ipq5018-cr880x.dtsi
+index 3348950279..8e6cef76c2 100644
+--- a/target/linux/qualcommax/dts/ipq5018-cr880x.dtsi
++++ b/target/linux/qualcommax/dts/ipq5018-cr880x.dtsi
+@@ -143,12 +143,13 @@
+ 		reg = <0>;
+ 		nand-ecc-engine = <&qpic_nand>;
+ 		/*
+-		 * The stock U-Boot uses 8-bit ECC. Without this the driver
+-		 * picks 4-bit from the chip requirements and every codeword
+-		 * read is misaligned (corrupted caldata, UBI read errors).
++		 * The CR8808 unit here (ESMT SPI NAND, 2048+64) is written by the
++		 * stock MiWiFi with 4-bit ECC; the stock dtb (config@mp02.1, from
++		 * the CR8808 factory image) carries nand-ecc-strength=<4>.
++		 * With 8 the driver requires 2128 bytes and the probe fails.
+ 		 */
+ 		nand-ecc-step-size = <512>;
+-		nand-ecc-strength = <8>;
++		nand-ecc-strength = <4>;
+ 		nand-bus-width = <8>;
+ 	};
+ };
+-- 
+2.50.1 (Apple Git-155)
+

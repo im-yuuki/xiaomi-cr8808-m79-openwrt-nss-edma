@@ -1,4 +1,4 @@
 [submodule "openwrt-nss-edma"]
 	path = openwrt-nss-edma
-	url = https://github.com/im-yuuki/openwrt-nss-edma.git
-	branch = cr8808-bringup-full
+	url = https://github.com/kuncy7/openwrt-nss-edma.git
+	branch = c3po-tag-8021q

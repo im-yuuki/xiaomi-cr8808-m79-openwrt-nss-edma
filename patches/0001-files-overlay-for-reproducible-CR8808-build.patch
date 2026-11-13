@@ -1,0 +1,84 @@
+From f1c337f7f92f94e00706f55a4369bb6e9a9ca4f8 Mon Sep 17 00:00:00 2001
+From: Izuki Horiuchi <izuki.horiuchi@gmail.com>
+Date: Fri, 13 Nov 2026 23:59:33 +0700
+Subject: [PATCH] files: overlay for reproducible CR8808 build
+
+- files/lib/preinit/09_mount_overlay_data: attach 31 MiB 'overlay' mtd
+  part as a second UBI device at preinit, create rootfs_data if missing,
+  then drop the 1MiB rootfs_data in rootfs_1 so mount_root keeps the big
+  one.Squashfs / (/rom) stays in rootfs_1; /overlay is UBIFS on mtd20.
+- files/etc/config/fstab: extroot mount /overlay -> /dev/ubi1_0.
+- files/etc/apk/repositories.d/distfeeds.list: pin official snapshots
+  base feeds (drop the nonexistent snapshots ns package path).
+---
+ files/etc/apk/repositories.d/distfeeds.list |  6 +++++
+ files/etc/config/fstab                      |  6 +++++
+ files/lib/preinit/09_mount_overlay_data     | 30 +++++++++++++++++++++
+ 3 files changed, 42 insertions(+)
+ create mode 100644 files/etc/apk/repositories.d/distfeeds.list
+ create mode 100644 files/etc/config/fstab
+ create mode 100755 files/lib/preinit/09_mount_overlay_data
+
+diff --git a/files/etc/apk/repositories.d/distfeeds.list b/files/etc/apk/repositories.d/distfeeds.list
+new file mode 100644
+index 0000000000..370bc31812
+--- /dev/null
++++ b/files/etc/apk/repositories.d/distfeeds.list
+@@ -0,0 +1,6 @@
++https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/base/packages.adb
++https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/luci/packages.adb
++https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/packages/packages.adb
++https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/routing/packages.adb
++https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/telephony/packages.adb
++https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/video/packages.adb
+diff --git a/files/etc/config/fstab b/files/etc/config/fstab
+new file mode 100644
+index 0000000000..339c37010f
+--- /dev/null
++++ b/files/etc/config/fstab
+@@ -0,0 +1,6 @@
++config mount
++	option target '/overlay'
++	option device '/dev/ubi1_0'
++	option fstype 'ubifs'
++	option options 'sync'
++	option enabled '1'
+diff --git a/files/lib/preinit/09_mount_overlay_data b/files/lib/preinit/09_mount_overlay_data
+new file mode 100755
+index 0000000000..30857fc67a
+--- /dev/null
++++ b/files/lib/preinit/09_mount_overlay_data
+@@ -0,0 +1,30 @@
++# Attach the unused "overlay" (31 MiB userdata) partition as a second UBI
++# device before mount_root runs, and make sure it carries a rootfs_data
++# volume. mount_root's NAND extroot logic then pivots /overlay onto this
++# volume instead of the small one inside the squashfs slot.
++
++. /lib/functions.sh
++. /lib/functions/system.sh
++. /lib/upgrade/nand.sh
++
++overlay_ubi() {
++	local ubidev vol
++
++	# attach (create UBI if the partition is blank)
++	ubidev="$(nand_attach_ubi overlay 2>/dev/null)" || return 0
++
++	# make sure it carries a rootfs_data volume
++	vol="$(nand_find_volume "$ubidev" rootfs_data 2>/dev/null)" || vol=""
++	if [ -z "$vol" ]; then
++		ubimkvol "/dev/$ubidev" -N rootfs_data -m >/dev/null 2>&1
++		vol="$(nand_find_volume "$ubidev" rootfs_data 2>/dev/null)"
++	fi
++
++	# drop the small slot-local rootfs_data, or mount_root keeps using it
++	# (cheap fallback gone — slot 0 still carries MiWiFi)
++	if [ -n "$vol" ] && nand_find_volume ubi0 rootfs_data >/dev/null 2>&1; then
++		ubirmvol /dev/ubi0 -N rootfs_data >/dev/null 2>&1 || true
++	fi
++}
++
++boot_hook_add preinit_main overlay_ubi
+-- 
+2.50.1 (Apple Git-155)
+

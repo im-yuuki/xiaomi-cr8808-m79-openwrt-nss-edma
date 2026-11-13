@@ -1,0 +1,30 @@
+# Attach the unused "overlay" (31 MiB userdata) partition as a second UBI
+# device before mount_root runs, and make sure it carries a rootfs_data
+# volume. mount_root's NAND extroot logic then pivots /overlay onto this
+# volume instead of the small one inside the squashfs slot.
+
+. /lib/functions.sh
+. /lib/functions/system.sh
+. /lib/upgrade/nand.sh
+
+overlay_ubi() {
+	local ubidev vol
+
+	# attach (create UBI if the partition is blank)
+	ubidev="$(nand_attach_ubi overlay 2>/dev/null)" || return 0
+
+	# make sure it carries a rootfs_data volume
+	vol="$(nand_find_volume "$ubidev" rootfs_data 2>/dev/null)" || vol=""
+	if [ -z "$vol" ]; then
+		ubimkvol "/dev/$ubidev" -N rootfs_data -m >/dev/null 2>&1
+		vol="$(nand_find_volume "$ubidev" rootfs_data 2>/dev/null)"
+	fi
+
+	# drop the small slot-local rootfs_data, or mount_root keeps using it
+	# (cheap fallback gone — slot 0 still carries MiWiFi)
+	if [ -n "$vol" ] && nand_find_volume ubi0 rootfs_data >/dev/null 2>&1; then
+		ubirmvol /dev/ubi0 -N rootfs_data >/dev/null 2>&1 || true
+	fi
+}
+
+boot_hook_add preinit_main overlay_ubi

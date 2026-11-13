@@ -6,7 +6,7 @@ This repository archives the work done to get OpenWrt (with **Qualcomm NSS hardw
 
 - **`docs/`** — device profile, U-Boot/console notes, build & flash guide, verification results.
 - **`artifacts/SHA256SUMS.txt`** — hashes of the flashed images (reproduce, don't download).
-- **`openwrt-nss-edma/`** — git submodule → **`im-yuuki/openwrt-nss-edma`**, branch `cr8808-bringup-full`. It contains a single upstream-visible fix (4-bit ECC for ESMT SPI NAND on this board) plus an optional reproducible-build overlay (`files/`) used for this device: extroot on `mtd20` (partition `overlay`, ~27 MB UBIFS `/overlay`), pin official snapshot feeds, 6 lines of `fstab`/preinit glue.
+- **`openwrt-nss-edma/`** — git submodule, pinned to **`kuncy7/openwrt-nss-edma` @ `c3po-tag-8021q`** (upstream tip as of the archive date). The archive carries the vendor patches separately: `patches/` (the one board-specific commit + the `files/` reproducible-build overlay), `overlay/` (the same files, pre-copied), and `docs/nand-ecc.md`.
 
 The base platform is [`kuncy7/openwrt-nss-edma`](https://github.com/kuncy7/openwrt-nss-edma) branch `c3po-tag-8021q` — the community Qualcomm NSS EDMA effort for IPQ5018 (upstream Linux 6.18, `stmmac` driver, `kmod-qca-dwmac-nss`). Neither this repo nor the fork redistribute Xiaomi proprietary blobs: everything is in-tree open-source or built by the vendor build system.
 
@@ -25,7 +25,7 @@ docs/
   verify.md        — what was verified on hardware
 artifacts/
   SHA256SUMS.txt   — image hashes (not shipping binaries)
-openwrt-nss-edma/  — submodule (build tree, branch cr8808-bringup-full)
+openwrt-nss-edma/  — submodule (upstream c3po-tag-8021q)
 .private/          — NOT in git: dumps, nvram, logs, local notes
 ```
 
