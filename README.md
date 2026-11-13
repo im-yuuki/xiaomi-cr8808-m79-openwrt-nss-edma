@@ -14,6 +14,10 @@ The base platform is [`kuncy7/openwrt-nss-edma`](https://github.com/kuncy7/openw
 
 Working snapshot — boots from NAND, both radios (2.4 GHz IPQ5018 + 5 GHz QCN6122, 802.11ax/HE160 on DFS channel 100 verified), NSS wired-plane offload (`fw_mask=0x3`, ECM accelerating), ath11k Wi-Fi offload, LuCI present. Not a supported OpenWrt release; a community build for this hardware, kept as an archive of the work.
 
+## NSS kmod feed (ipq50xx-2026.11.11/256m)
+
+Upstream's official image ships a throwaway `public-key.pem` in `/etc/apk/keys/` that verifies that release's kmod feed. The key for `ipq50xx-2026.11.11/256m` is included in `artifacts/keys/` — install it and point `customfeeds.list` at the feed to `apk add` NSS kmods on the device. See `docs/nss-feed.md`.
+
 ## Layout
 
 ```
