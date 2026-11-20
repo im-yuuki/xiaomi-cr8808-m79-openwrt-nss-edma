@@ -62,6 +62,18 @@ image. The feed is signed with a build-local throwaway key; its public half is
 embedded in the image and published as `public-key.pem` — the private key never
 leaves the runner.
 
+The build stays in the GitHub-hosted runner workspace: `/mnt` is not
+guaranteed to be a separate disk. The job logs actual free space and only
+cleans unused preinstalled tools when the workspace starts below 40 GiB.
+
+GitHub Actions Cache saves `dl/` after downloads and `.ccache/` (up to 4 GB)
+after compilation. New upstream or feed revisions can reuse the last source
+cache and a compatible compiler cache; the firmware and APKs are rebuilt.
+The build log reports compiler cache hits and misses. For builds spaced
+14 days apart, set **Settings → Actions → General → Cache settings →
+Cache retention** to 21 days or more if available. The default is 7 days,
+so infrequent builds may start cold; cache misses do not block the build.
+
 ## Quick start (pointers only; details in docs/build-flash.md)
 
 1. `git submodule update --init

@@ -52,13 +52,20 @@ jobs:
     env:
       TAG: ${{ needs.meta.outputs.tag }}
     steps:
-      - name: Free disk space
+      - name: Check runner disk space
         run: |
           set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force >/dev/null 2>&1 || true
-          df -h / | tail -1
+          # Some runner images have no separate disk at /mnt. Keep the build
+          # in the workspace and reclaim space only on smaller runners.
+          df -hT "$GITHUB_WORKSPACE"
+          if [[ -d /mnt ]]; then df -hT /mnt; fi
+          free_bytes=$(df -PB1 "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $4 }')
+          if (( free_bytes < 40 * 1024 * 1024 * 1024 )); then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+              /opt/hostedtoolcache/CodeQL
+            sudo docker image prune --all --force >/dev/null 2>&1 || true
+            df -hT "$GITHUB_WORKSPACE"
+          fi
 
       - name: Install build dependencies
         run: |
@@ -89,6 +96,13 @@ jobs:
             git apply "$p" || git apply --3way "$p"
           done
 
+      - name: Feeds
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
       - name: Configure
         working-directory: openwrt-nss-edma
         run: |
@@ -102,7 +116,7 @@ jobs:
             CONFIG_PACKAGE_MAC80211_NSS_SUPPORT=y \
             CONFIG_ATH11K_NSS_SUPPORT=y \
             CONFIG_NSS_MEM_PROFILE_LOW=y \
-            CONFIG_ATH11K_MEM_PROFILE_256M=y \
+            CONFIG_CCACHE=y \
             CONFIG_PACKAGE_kmod-qca-nss-ecm=y \
             CONFIG_PACKAGE_kmod-qca-dwmac-nss=y; do
             grep -qxF "$sym" .config || { echo "::error::defconfig dropped $sym"; exit 1; }
@@ -119,12 +133,35 @@ jobs:
           cat files/etc/apk/repositories.d/distfeeds.list
           ./scripts/diffconfig.sh >"../diffconfig-${TAG}.txt"
 
-      - name: Feeds
+      - name: Compute cache keys
+        id: cache
         working-directory: openwrt-nss-edma
         run: |
           set -euo pipefail
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # Resolve upstream and feed revisions, not the superproject gitlink.
+          inputs=$({
+            git rev-parse HEAD
+            ./scripts/feeds list -fs
+            cat "../diffconfig-${TAG}.txt"
+            sha256sum ../patches/*.patch
+          } | sha256sum | cut -c1-24)
+          toolchain=$({
+            git rev-parse HEAD:toolchain HEAD:tools/ccache
+            grep -E '^CONFIG_(ARCH|BINUTILS|GCC|LIBC|MUSL|TARGET_OPTIMIZATION)' .config
+            gcc --version
+            as --version
+            getconf GNU_LIBC_VERSION
+          } | sha256sum | cut -c1-24)
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+          echo "ccache-prefix=cr8806-ccache-v1-${RUNNER_OS}-${RUNNER_ARCH}-${ImageOS:-unknown}-${toolchain}-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore source archives
+        id: sources
+        uses: actions/cache/restore@v6
+        with:
+          path: openwrt-nss-edma/dl
+          key: cr8806-dl-v1-inventory
+          restore-keys: cr8806-dl-v1-
 
       - name: Download sources
         working-directory: openwrt-nss-edma
@@ -146,17 +183,62 @@ jobs:
           done
           [[ "$ok" == 1 ]] || { echo "::error::sources could not be downloaded"; exit 1; }
 
+      - name: Inventory downloaded archives
+        id: archives
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          find dl -maxdepth 1 -type f \( -name '*.dl' -o -name '*.hash' \) -delete
+          inventory=$(find dl -maxdepth 1 -type f -printf '%f %s\n' | LC_ALL=C sort | sha256sum | cut -c1-24)
+          echo "key=cr8806-dl-v1-${inventory}" >> "$GITHUB_OUTPUT"
+          du -sh dl
+
+      # Save before compiling, but do not write another copy of an unchanged inventory.
+      - name: Save source archives
+        if: steps.archives.outputs.key != steps.sources.outputs.cache-matched-key
+        uses: actions/cache/save@v6
+        with:
+          path: openwrt-nss-edma/dl
+          key: ${{ steps.archives.outputs.key }}
+
+      - name: Restore compiler cache
+        id: ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: openwrt-nss-edma/.ccache
+          key: ${{ steps.cache.outputs.ccache-prefix }}${{ steps.cache.outputs.inputs }}
+          restore-keys: ${{ steps.cache.outputs.ccache-prefix }}
+
       - name: Build
         working-directory: openwrt-nss-edma
         env:
           CCACHE_COMPILERCHECK: content
           CCACHE_MAXSIZE: 4G
+          CCACHE_STATSLOG: ${{ runner.temp }}/cr8806-ccache.log
         run: |
           set -euo pipefail
           if ! make -j"$(nproc)"; then
             make -j1 V=s 2>&1 | tail -300
             exit 1
           fi
+
+      - name: Report build cache and disk usage
+        if: ${{ !cancelled() && steps.ccache.outcome == 'success' }}
+        working-directory: openwrt-nss-edma
+        env:
+          CCACHE_STATSLOG: ${{ runner.temp }}/cr8806-ccache.log
+        run: |
+          df -hT .
+          if [[ -x staging_dir/host/bin/ccache && -f "$CCACHE_STATSLOG" ]]; then
+            CCACHE_DIR="$PWD/.ccache" staging_dir/host/bin/ccache --show-log-stats || true
+          fi
+
+      - name: Save compiler cache
+        if: steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: openwrt-nss-edma/.ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
 
       - name: Index the package repository
         working-directory: openwrt-nss-edma
