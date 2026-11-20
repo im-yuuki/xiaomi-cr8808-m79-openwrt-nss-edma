@@ -37,8 +37,14 @@ openwrt-nss-edma/  — submodule (upstream c3po-tag-8021q)
 
 ## Automated builds
 
-`.github/workflows/build-cr880x.yml` runs once every 14 days and on manual
-dispatch (`Actions → Build CR880x firmware + kmod feed → Run workflow`). It:
+`.github/workflows/build-cr880x.yml` runs on manual dispatch
+(`Actions → Build CR880x firmware + kmod feed → Run workflow`). The 14-day
+schedule (`cron: 0 0 */14 * *`, i.e. days 1, 15, 29 UTC) is currently commented
+out in the workflow — uncomment the two lines under `on:` to enable it. Note
+that GitHub's day-of-month cron is not a true 14-day interval across a month
+boundary; there is no gate, every scheduled trigger builds.
+
+The workflow:
 
 1. pulls `openwrt-nss-edma` to the newest commit on upstream `c3po-tag-8021q`
    (not the pinned gitlink), then applies `patches/`;
@@ -47,7 +53,8 @@ dispatch (`Actions → Build CR880x firmware + kmod feed → Run workflow`). It:
    `kmod-*.apk` — with its signed `packages.adb` index** to GitHub Pages under
    `gh-pages`, one `ipq50xx-YYYY.MM.DD-N/` directory per build (newest 3 kept).
 
-Before the first run, enable Pages in the repo settings: **Settings → Pages →
+The `gh-pages` branch already exists (seeded with `.nojekyll` and an empty
+`index.md`). Enable Pages in the repo settings: **Settings → Pages →
 Build and deployment → Source: Deploy from a branch → `gh-pages` / root**.
 The image's `distfeeds.list` is generated during CI and already points at that
 build's feed, so `apk update && apk add kmod-wireguard` works on a matching

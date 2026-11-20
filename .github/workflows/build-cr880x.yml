@@ -4,17 +4,17 @@ name: Build CR880x firmware + kmod feed
 # newest upstream submodule tip, then publishes the image and the build's own
 # APK package repository (which contains every kmod-*.apk) to GitHub Pages.
 #
-# Cadence: once every 14 days. GitHub schedules are evaluated daily, so the
-# gate below compares against the newest build directory already on gh-pages
-# and skips the build when fewer than 14 days have passed. workflow_dispatch
-# always builds.
+# Schedule: cron */14 (days 1, 15 and 29 of each month, UTC). It is commented
+# out for now; uncomment the two lines below to enable it. workflow_dispatch
+# always works.
 #
 # The image's /etc/apk/repositories.d/distfeeds.list points at this build's
 # own feed, so kmods only install on an image from the same build.
 
 on:
-  schedule:
-    - cron: '0 0 * * *'
+  # Tạm thời tắt lịch; bỏ comment 2 dòng dưới để bật chạy mỗi 14 ngày.
+  # schedule:
+  #   - cron: '0 0 */14 * *'
   workflow_dispatch:
 
 concurrency:
@@ -34,52 +34,23 @@ env:
   KEEP: '3' # build directories to keep on gh-pages
 
 jobs:
-  prepare:
-    name: Decide whether to build
+  meta:
+    name: Prepare build tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
     outputs:
-      run: ${{ steps.decide.outputs.run }}
-      tag: ${{ steps.decide.outputs.tag }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - id: decide
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          echo "run=true" >> "$GITHUB_OUTPUT"
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            # gh-pages is only touched by real builds, so it is a reliable clock.
-            newest=$(gh api "repos/${GITHUB_REPOSITORY}/contents/?ref=gh-pages" \
-                     --jq '.[].name' 2>/dev/null \
-                     | grep -E '^ipq50xx-[0-9]{4}\.[0-9]{2}\.[0-9]{2}' | sort -r | head -1 || true)
-            if [[ -n "$newest" ]]; then
-              d="${newest#ipq50xx-}"; d="${d%%-*}"
-              age=$(( ( $(date -u +%s) - $(date -u -d "${d//./-}" +%s) ) / 86400 ))
-              echo "newest published build: $newest ($age days ago)"
-              if (( age < 14 )); then
-                echo "fewer than 14 days since the last build - skipping"
-                echo "run=false" >> "$GITHUB_OUTPUT"
-              fi
-            else
-              echo "no published build found - building"
-            fi
-          else
-            echo "workflow_dispatch - building"
-          fi
-          echo "tag=ipq50xx-$(date -u +%Y.%m.%d)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - id: tag
+        run: echo "tag=ipq50xx-$(date -u +%Y.%m.%d)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build CR8806 firmware
-    needs: prepare
-    if: needs.prepare.outputs.run == 'true'
+    needs: meta
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      TAG: ${{ needs.prepare.outputs.tag }}
+      TAG: ${{ needs.meta.outputs.tag }}
     steps:
       - name: Free disk space
         run: |
@@ -236,14 +207,13 @@ jobs:
 
   publish:
     name: Publish to GitHub Pages
-    needs: [prepare, build]
-    if: needs.prepare.outputs.run == 'true'
+    needs: [meta, build]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
     env:
-      TAG: ${{ needs.prepare.outputs.tag }}
+      TAG: ${{ needs.meta.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out gh-pages
@@ -261,12 +231,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: kmods-cr8806
-          path: site/${{ needs.prepare.outputs.tag }}/
+          path: site/${{ needs.meta.outputs.tag }}/
 
       - uses: actions/download-artifact@v4
         with:
           name: firmware-cr8806
-          path: site/${{ needs.prepare.outputs.tag }}/firmware/
+          path: site/${{ needs.meta.outputs.tag }}/firmware/
 
       - name: Arrange, prune, push
         run: |
