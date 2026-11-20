@@ -1,0 +1,304 @@
+name: Build CR880x firmware + kmod feed
+
+# Builds the Xiaomi CR880x (xiaomi_cr8806, 256 MB profile) image from the
+# newest upstream submodule tip, then publishes the image and the build's own
+# APK package repository (which contains every kmod-*.apk) to GitHub Pages.
+#
+# Cadence: once every 14 days. GitHub schedules are evaluated daily, so the
+# gate below compares against the newest build directory already on gh-pages
+# and skips the build when fewer than 14 days have passed. workflow_dispatch
+# always builds.
+#
+# The image's /etc/apk/repositories.d/distfeeds.list points at this build's
+# own feed, so kmods only install on an image from the same build.
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: build-cr880x
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TARGET: qualcommax/ipq50xx
+  DEVICE: xiaomi_cr8806
+  SUBMODULE: openwrt-nss-edma
+  CI_DIR: .github/ci
+  PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+  TAG_RE: '^ipq50xx-[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-[0-9]+)?$'
+  KEEP: '3' # build directories to keep on gh-pages
+
+jobs:
+  prepare:
+    name: Decide whether to build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # gh-pages is only touched by real builds, so it is a reliable clock.
+            newest=$(gh api "repos/${GITHUB_REPOSITORY}/contents/?ref=gh-pages" \
+                     --jq '.[].name' 2>/dev/null \
+                     | grep -E '^ipq50xx-[0-9]{4}\.[0-9]{2}\.[0-9]{2}' | sort -r | head -1 || true)
+            if [[ -n "$newest" ]]; then
+              d="${newest#ipq50xx-}"; d="${d%%-*}"
+              age=$(( ( $(date -u +%s) - $(date -u -d "${d//./-}" +%s) ) / 86400 ))
+              echo "newest published build: $newest ($age days ago)"
+              if (( age < 14 )); then
+                echo "fewer than 14 days since the last build - skipping"
+                echo "run=false" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "no published build found - building"
+            fi
+          else
+            echo "workflow_dispatch - building"
+          fi
+          echo "tag=ipq50xx-$(date -u +%Y.%m.%d)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build CR8806 firmware
+    needs: prepare
+    if: needs.prepare.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h / | tail -1
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update || true
+          sudo apt-get install -y bzip2 g++ gawk gcc git glibc-source \
+            libncurses-dev make rsync
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The OpenWrt tree is a submodule; it is fetched separately below so
+          # it can be moved to the upstream branch tip instead of the pinned gitlink.
+
+      - name: Pull submodule to the newest upstream commit
+        run: |
+          set -euo pipefail
+          git submodule update --init --remote "$SUBMODULE"
+          echo "submodule HEAD: $(git -C "$SUBMODULE" rev-parse HEAD)"
+          git submodule status
+
+      - name: Apply CR880x board patches
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          for p in ../patches/*.patch; do
+            echo "applying $p"
+            git apply "$p" || git apply --3way "$p"
+          done
+
+      - name: Configure
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          cp "../${CI_DIR}/cr8806.config" .config
+          make defconfig
+          # Fail loudly instead of silently producing an image without the NSS plane.
+          for sym in \
+            CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_xiaomi_cr8806=y \
+            CONFIG_PACKAGE_nss-tools-dwmac=y \
+            CONFIG_PACKAGE_MAC80211_NSS_SUPPORT=y \
+            CONFIG_ATH11K_NSS_SUPPORT=y \
+            CONFIG_NSS_MEM_PROFILE_LOW=y \
+            CONFIG_ATH11K_MEM_PROFILE_256M=y \
+            CONFIG_PACKAGE_kmod-qca-nss-ecm=y \
+            CONFIG_PACKAGE_kmod-qca-dwmac-nss=y; do
+            grep -qxF "$sym" .config || { echo "::error::defconfig dropped $sym"; exit 1; }
+          done
+          # Point the image at this build's own feed. The official snapshot feeds
+          # stay for non-kernel packages; their kmods have a different vermagic.
+          mkdir -p files/etc/apk/repositories.d
+          {
+            echo "${PAGES_BASE}/${TAG}/packages.adb"
+            for f in base luci packages routing telephony video; do
+              echo "https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/${f}/packages.adb"
+            done
+          } >files/etc/apk/repositories.d/distfeeds.list
+          cat files/etc/apk/repositories.d/distfeeds.list
+          ./scripts/diffconfig.sh >"../diffconfig-${TAG}.txt"
+
+      - name: Feeds
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Download sources
+        working-directory: openwrt-nss-edma
+        timeout-minutes: 75
+        env:
+          GIT_HTTP_LOW_SPEED_LIMIT: '1000'
+          GIT_HTTP_LOW_SPEED_TIME: '60'
+          CURL_OPTIONS: --speed-limit 1000 --speed-time 60
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if timeout --kill-after=60 20m make download -j"$(nproc)"; then
+              ok=1
+              break
+            fi
+            echo "::warning::download attempt $attempt failed"
+            find dl -maxdepth 1 -name '*.dl' -printf '::warning::unfinished: %f (%s bytes)\n' || true
+          done
+          [[ "$ok" == 1 ]] || { echo "::error::sources could not be downloaded"; exit 1; }
+
+      - name: Build
+        working-directory: openwrt-nss-edma
+        env:
+          CCACHE_COMPILERCHECK: content
+          CCACHE_MAXSIZE: 4G
+        run: |
+          set -euo pipefail
+          if ! make -j"$(nproc)"; then
+            make -j1 V=s 2>&1 | tail -300
+            exit 1
+          fi
+
+      - name: Index the package repository
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          make package/index
+          # Public half of the build-local key that signed packages.adb.
+          [[ -f public-key.pem ]] && cp public-key.pem "bin/targets/${TARGET}/packages/public-key.pem" || true
+
+      - name: Check the output
+        working-directory: openwrt-nss-edma
+        run: |
+          set -euo pipefail
+          out="bin/targets/${TARGET}"
+          for f in \
+            "openwrt-qualcommax-ipq50xx-${DEVICE}-initramfs-uImage.itb" \
+            "openwrt-qualcommax-ipq50xx-${DEVICE}-squashfs-factory.ubi" \
+            "openwrt-qualcommax-ipq50xx-${DEVICE}-squashfs-sysupgrade.bin"; do
+            [[ -f "$out/$f" ]] || { echo "::error::missing $out/$f"; exit 1; }
+          done
+          [[ -f "$out/packages/packages.adb" ]] || { echo "::error::no package index"; exit 1; }
+          compgen -G "$out/packages/kmod-*.apk" >/dev/null \
+            || { echo "::error::no kmod packages built"; exit 1; }
+          n=$(find "$out/packages" -maxdepth 1 -name 'kmod-*.apk' | wc -l)
+          echo "firmware images: 3"
+          echo "kmod packages: $n" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-cr8806
+          path: |
+            openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/*xiaomi_cr8806*
+            openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/sha256sums
+            openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/config.buildinfo
+            openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/feeds.buildinfo
+            openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/openwrt-qualcommax-ipq50xx.manifest
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload package repository (all kmods)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kmods-cr8806
+          path: openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/packages/
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Publish to GitHub Pages
+    needs: [prepare, build]
+    if: needs.prepare.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out gh-pages
+        run: |
+          set -euo pipefail
+          git init -q site
+          cd site
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin gh-pages 2>/dev/null; then
+            git checkout -q -b gh-pages FETCH_HEAD
+          else
+            git checkout -q --orphan gh-pages
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kmods-cr8806
+          path: site/${{ needs.prepare.outputs.tag }}/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-cr8806
+          path: site/${{ needs.prepare.outputs.tag }}/firmware/
+
+      - name: Arrange, prune, push
+        run: |
+          set -euo pipefail
+          cd site
+          [[ -f "${TAG}/packages.adb" ]] || { echo "::error::no package index in artifact"; exit 1; }
+          # Keep the newest KEEP builds. The tag starts with a date, so name order is time order.
+          mapfile -t dirs < <(find . -maxdepth 1 -type d -printf '%f\n' | grep -E "$TAG_RE" | sort -r)
+          for old in "${dirs[@]:${KEEP}}"; do
+            echo "prune $old"
+            rm -rf "$old"
+          done
+          {
+            echo "# Xiaomi CR880x OpenWrt (NSS offload)"
+            echo
+            echo "One directory per build. Firmware images and that build's signed APK"
+            echo "repository (all \`kmod-*.apk\`) are kept together: a kmod only installs on"
+            echo "an image from the same build."
+            echo
+            echo "| build | kmod feed | firmware |"
+            echo "|---|---|---|"
+            for t in $(find . -maxdepth 1 -type d -printf '%f\n' | grep -E "$TAG_RE" | sort -r); do
+              echo "| $t | [packages.adb](${t}/packages.adb) | [firmware/](${t}/firmware/) |"
+            done
+            echo
+            echo "On the router: \`apk update && apk add kmod-wireguard\`."
+          } >index.md
+          touch .nojekyll
+          # One squashed commit per build: the branch holds binaries, not history.
+          git checkout -q --orphan gh-pages-new
+          git add -A
+          git -c user.name=github-actions -c user.email=github-actions@github.com \
+            commit -qm "build ${TAG}"
+          git push -q --force origin gh-pages-new:gh-pages
+          echo "published ${PAGES_BASE}/${TAG}/" | tee -a "$GITHUB_STEP_SUMMARY"

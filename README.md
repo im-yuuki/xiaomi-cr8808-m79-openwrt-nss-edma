@@ -22,6 +22,8 @@ Upstream's official image ships a throwaway `public-key.pem` in `/etc/apk/keys/`
 
 ```
 .github/
+  workflows/build-cr880x.yml — scheduled / manual firmware + kmod-feed build
+  ci/cr8806.config           — validated build config (+ extra kmods for the feed)
 docs/
   device.md        — hardware profile (summary, sanitized)
   uboot-notes.md   — U-Boot console notes + safety rules
@@ -32,6 +34,26 @@ artifacts/
 openwrt-nss-edma/  — submodule (upstream c3po-tag-8021q)
 .private/          — NOT in git: dumps, nvram, logs, local notes
 ```
+
+## Automated builds
+
+`.github/workflows/build-cr880x.yml` runs once every 14 days and on manual
+dispatch (`Actions → Build CR880x firmware + kmod feed → Run workflow`). It:
+
+1. pulls `openwrt-nss-edma` to the newest commit on upstream `c3po-tag-8021q`
+   (not the pinned gitlink), then applies `patches/`;
+2. builds the `xiaomi_cr8806` image with `.github/ci/cr8806.config`;
+3. publishes the images **and the build's APK repository — including every
+   `kmod-*.apk` — with its signed `packages.adb` index** to GitHub Pages under
+   `gh-pages`, one `ipq50xx-YYYY.MM.DD-N/` directory per build (newest 3 kept).
+
+Before the first run, enable Pages in the repo settings: **Settings → Pages →
+Build and deployment → Source: Deploy from a branch → `gh-pages` / root**.
+The image's `distfeeds.list` is generated during CI and already points at that
+build's feed, so `apk update && apk add kmod-wireguard` works on a matching
+image. The feed is signed with a build-local throwaway key; its public half is
+embedded in the image and published as `public-key.pem` — the private key never
+leaves the runner.
 
 ## Quick start (pointers only; details in docs/build-flash.md)
 
