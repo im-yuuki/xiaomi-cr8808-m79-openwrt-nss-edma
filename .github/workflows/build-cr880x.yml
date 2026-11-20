@@ -46,6 +46,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       upstream_commit: ${{ steps.upstream.outputs.commit }}
+      gitmodules: ${{ steps.upstream.outputs.gitmodules }}
     steps:
       - name: Assign build tag
         id: tag
@@ -91,6 +92,7 @@ jobs:
           git submodule update --init --remote "$SUBMODULE"
           commit=$(git -C "$SUBMODULE" rev-parse HEAD)
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "gitmodules=$(git rev-parse HEAD:.gitmodules)" >> "$GITHUB_OUTPUT"
           git submodule status
 
       - name: Apply CR880x board patches
@@ -292,6 +294,61 @@ jobs:
           path: openwrt-nss-edma/bin/targets/qualcommax/ipq50xx/packages/
           if-no-files-found: error
           retention-days: 3
+
+  update_submodule:
+    name: Save the built upstream commit on the default branch
+    needs: build
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      UPSTREAM_COMMIT: ${{ needs.build.outputs.upstream_commit }}
+      BUILT_GITMODULES: ${{ needs.build.outputs.gitmodules }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/heads/${{ github.event.repository.default_branch }}
+
+      - name: Advance the submodule pointer
+        run: |
+          set -euo pipefail
+          current=$(git rev-parse "HEAD:$SUBMODULE")
+          if [[ "$current" == "$UPSTREAM_COMMIT" ]]; then
+            echo "The submodule already points to $current."
+            exit 0
+          fi
+          if [[ "$(git rev-parse HEAD:.gitmodules)" != "$BUILT_GITMODULES" ]]; then
+            echo "::error::.gitmodules changed since this build; run a new build from the default branch."
+            exit 1
+          fi
+
+          # Inspect only upstream history; do not run upstream code in this write-enabled job.
+          url=$(git config -f .gitmodules --get "submodule.$SUBMODULE.url")
+          branch=$(git config -f .gitmodules --get "submodule.$SUBMODULE.branch")
+          history=$(mktemp -d "$RUNNER_TEMP/openwrt-gitlink.XXXXXX")
+          git clone --bare --filter=blob:none --single-branch --branch "$branch" "$url" "$history"
+          if ! git -C "$history" merge-base --is-ancestor "$UPSTREAM_COMMIT" "refs/heads/$branch"; then
+            echo "::error::The built commit is no longer on the configured upstream branch."
+            exit 1
+          fi
+          if git -C "$history" merge-base --is-ancestor "$UPSTREAM_COMMIT" "$current"; then
+            echo "The default branch already points to a newer upstream commit."
+            exit 0
+          fi
+          if ! git -C "$history" merge-base --is-ancestor "$current" "$UPSTREAM_COMMIT"; then
+            echo "::error::The upstream commits have diverged or history is missing; the pointer was not changed."
+            exit 1
+          fi
+
+          git update-index --cacheinfo "160000,$UPSTREAM_COMMIT,$SUBMODULE"
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "chore: update OpenWrt submodule to ${UPSTREAM_COMMIT:0:12}"
+          # A competing push is rejected rather than overwriting the default branch.
+          git push origin "HEAD:refs/heads/$DEFAULT_BRANCH"
 
   publish:
     name: Publish to GitHub Pages

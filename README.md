@@ -6,7 +6,7 @@ This repository archives the work done to get OpenWrt (with **Qualcomm NSS hardw
 
 - **`docs/`** — device profile, U-Boot/console notes, build & flash guide, verification results.
 - **`artifacts/SHA256SUMS.txt`** — hashes of the flashed images (reproduce, don't download).
-- **`openwrt-nss-edma/`** — git submodule, pinned to **`kuncy7/openwrt-nss-edma` @ `c3po-tag-8021q`** (upstream tip as of the archive date). The archive carries the vendor patches separately: `patches/` (the one board-specific commit + the `files/` reproducible-build overlay), `overlay/` (the same files, pre-copied), and `docs/nand-ecc.md`.
+- **`openwrt-nss-edma/`** — git submodule tracking **`kuncy7/openwrt-nss-edma` @ `c3po-tag-8021q`**. The archive carries the vendor patches separately: `patches/` (the one board-specific commit + the `files/` reproducible-build overlay), `overlay/` (the same files, pre-copied), and `docs/nand-ecc.md`.
 
 The base platform is [`kuncy7/openwrt-nss-edma`](https://github.com/kuncy7/openwrt-nss-edma) branch `c3po-tag-8021q` — the community Qualcomm NSS EDMA effort for IPQ5018 (upstream Linux 6.18, `stmmac` driver, `kmod-qca-dwmac-nss`). Neither this repo nor the fork redistribute Xiaomi proprietary blobs: everything is in-tree open-source or built by the vendor build system.
 
@@ -53,6 +53,10 @@ The workflow:
    `kmod-*.apk` — with its signed `packages.adb` index** to GitHub Pages under
    `gh-pages`, one `ipq50xx-YYYY.MM.DD-N/` directory per build (newest 3 kept;
    a rebuild of the same run gets an `-aN` suffix).
+
+After a successful build on the default branch, CI advances the repository's
+submodule pointer to the exact upstream commit used to build the firmware.
+It never rolls the pointer back or overwrites a concurrent push.
 
 Check **Publish to GitHub Releases** in the manual dispatch form to also
 publish a prerelease for that build after the Pages job succeeds. The
