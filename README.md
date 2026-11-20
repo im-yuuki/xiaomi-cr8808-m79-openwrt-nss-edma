@@ -51,7 +51,14 @@ The workflow:
 2. builds the `xiaomi_cr8806` image with `.github/ci/cr8806.config`;
 3. publishes the images **and the build's APK repository — including every
    `kmod-*.apk` — with its signed `packages.adb` index** to GitHub Pages under
-   `gh-pages`, one `ipq50xx-YYYY.MM.DD-N/` directory per build (newest 3 kept).
+   `gh-pages`, one `ipq50xx-YYYY.MM.DD-N/` directory per build (newest 3 kept;
+   a rebuild of the same run gets an `-aN` suffix).
+
+Check **Publish to GitHub Releases** in the manual dispatch form to also
+publish a prerelease for that build after the Pages job succeeds. The
+checkbox is off by default. The prerelease includes the firmware,
+checksums, build metadata, and an archive of the matching signed APK feed.
+The archive remains available even after Pages removes the older build.
 
 The `gh-pages` branch already exists (seeded with `.nojekyll` and an empty
 `index.md`). Enable Pages in the repo settings: **Settings → Pages →
